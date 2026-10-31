@@ -11,7 +11,7 @@ Befehle:
   PLATZ : Zeigefinger zeigt zum Boden
   AUF   : Zeigefinger oder «L» (Daumen + Zeigefinger) zeigt nach oben
 
-Steuerung:  q / ESC = Beenden,  f = Vollbild an/aus
+Steuerung:  q / ESC = Beenden,  f = Vollbild an/aus,  d = Debug-Anzeige an/aus
 Optionen:   --camera N, --no-voice
 """
 
@@ -57,11 +57,18 @@ POINT_OTHERS_MIN_COUNT = 2
 COS_DOWN = np.cos(np.radians(70))  # PLATZ: max. 70° Abweichung von "unten"
 COS_UP = np.cos(np.radians(60))  # AUF: max. 60° Abweichung von "oben"
 MIN_2D_LEN = 0.35
+
+# PLATZ: Arm-Kontext aus der Pose (hilft, wenn der Finger zur Kamera zeigt)
+ARM_DOWN_COS = np.cos(np.radians(50))  # Schulter->Handgelenk max. 50° von "unten"
+ARM_MATCH_FRAC = 0.8  # Hand <-> Handgelenk-Keypoint: max. Abstand (x Schulterbreite)
+ARM_WRIST_CONF = 0.3  # min. Konfidenz des Handgelenk-Keypoints
+POINT_INDEX_LOOSE = 0.80  # lockere Streckung des Zeigefingers (Arm-Kontext)
+HAND_DETECTION_CONF = 0.5
 EMA_ALPHA = 0.5
 
 # Klassifikator-Schwellen
-OPEN_PALM_MIN = 0.5 #0.5
-POINTING_UP_MIN = 0.5 #0.6
+OPEN_PALM_MIN = 0.5
+POINTING_UP_MIN = 0.5
 
 # Entprellung
 HISTORY_LENGTH = 10
@@ -268,6 +275,44 @@ def point_in_box(pt, box):
   return box is not None and box[0] <= pt[0] <= box[2] and box[1] <= pt[1] <= box[3]
 
 
+def arm_segments(result):
+  """[(schulter_xy, handgelenk_xy, schulterbreite)] der grössten Person (Pixel)."""
+  if (
+      result is None
+      or result.keypoints is None
+      or result.boxes is None
+      or len(result.boxes) == 0
+  ):
+    return []
+  xyxy = result.boxes.xyxy.cpu().numpy()
+  i = int(np.argmax((xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1])))
+  xy = result.keypoints.xy[i].cpu().numpy()
+  conf_t = result.keypoints.conf
+  conf = conf_t[i].cpu().numpy() if conf_t is not None else np.ones(len(xy))
+  if len(xy) < 11 or conf[5] < KP_CONF or conf[6] < KP_CONF:
+    return []
+  sh_w = abs(xy[5][0] - xy[6][0])
+  # Paare (Schulter, Handgelenk) bleiben auch im gespiegelten Bild konsistent
+  return [
+      (xy[s], xy[wr], sh_w)
+      for s, wr in ((5, 9), (6, 10))
+      if conf[wr] >= ARM_WRIST_CONF
+  ]
+
+
+def arm_down_value(palm, arms):
+  """y-Komponente (+ = unten) der Richtung Schulter->Handgelenk des Arms,
+  der zur Hand gehört. None, wenn kein Arm zur Hand passt."""
+  best, best_d = None, 1e9
+  for sh, wr, sh_w in arms:
+    d = np.linalg.norm(wr - palm)
+    if d < best_d and d < ARM_MATCH_FRAC * max(sh_w, 1.0):
+      best, best_d = (sh, wr), d
+  if best is None:
+    return None
+  return float(unit(best[1] - best[0])[1])
+
+
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
@@ -326,7 +371,7 @@ def main():
           base_options=mp_python.BaseOptions(model_asset_path=GESTURE_MODEL),
           running_mode=vision.RunningMode.VIDEO,
           num_hands=2,
-          min_hand_detection_confidence=0.6,
+          min_hand_detection_confidence=HAND_DETECTION_CONF,
           min_hand_presence_confidence=0.5,
           min_tracking_confidence=0.5,
       )
@@ -352,7 +397,8 @@ def main():
   stable_gesture = NONE
   last_ts = -1
   sm_worlds, sm_imgs, states = {}, {}, {}
-  torso = None
+  torso, arms = None, []
+  debug = True
   frame_no = 0
   fps, t_prev = 0.0, time.perf_counter()
 
@@ -373,6 +419,7 @@ def main():
       if frame_no % POSE_EVERY_N == 0:
         pose_res = pose_model(frame, imgsz=POSE_IMGSZ, verbose=False)[0]
         torso = torso_box(pose_res, w, h)
+        arms = arm_segments(pose_res)
 
       # --- Hände ---
       ts = max(int(time.monotonic() * 1000), last_ts + 1)
@@ -434,6 +481,17 @@ def main():
                           for j in (0, 5, 9, 13, 17)], axis=0)
           in_torso = point_in_box(palm, torso)
 
+          # PLATZ-Kontext: Arm hängt/zeigt nach unten (aus der Pose)
+          arm_v = arm_down_value(palm, arms)
+          arm_down = arm_v is not None and arm_v > ARM_DOWN_COS
+          pointing_loose = (
+              values["index"] >= POINT_INDEX_LOOSE
+              and n_curled >= POINT_OTHERS_MIN_COUNT
+              and n_ext == 0
+          )
+          finger_down = pointing and idx_v > COS_DOWN
+          arm_pointing_down = pointing_loose and arm_down and idx_v > 0.0
+
           # --- Entscheidung für diese Hand (Priorität: SITZ > AUF > PLATZ) ---
           cmd = NONE
           if g_name == "Open_Palm" and g_score >= OPEN_PALM_MIN and in_torso:
@@ -442,11 +500,21 @@ def main():
               pointing and idx_v < -COS_UP  # deckt auch die «L»-Haltung ab
           ):
             cmd = AUF
-          elif pointing and idx_v > COS_DOWN:
+          elif finger_down or arm_pointing_down:
             cmd = PLATZ
 
           if cmd != NONE:
             current = cmd
+
+          if debug:
+            arm_txt = "-" if arm_v is None else f"{arm_v:+.2f}"
+            dbg = (
+                f"v={idx_v:+.2f} idx={values['index']:.2f} "
+                f"pt={int(pointing)}/{int(pointing_loose)} arm={arm_txt}"
+            )
+            cv2.putText(frame, dbg, (int(palm[0]) - 80, int(palm[1]) + 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1,
+                        cv2.LINE_AA)
 
           for p in hand_lms:
             cv2.circle(frame, (int(p.x * w), int(p.y * h)), 3, (0, 0, 255), -1)
@@ -470,7 +538,11 @@ def main():
       else:
         command, source = NONE, "-"
 
-      # Torso-Box (Debug)
+      # Torso-Box / Arme (Debug)
+      if debug:
+        for sh, wr, _ in arms:
+          cv2.line(frame, (int(sh[0]), int(sh[1])), (int(wr[0]), int(wr[1])),
+                   (255, 0, 255), 2)
       if torso is not None:
         cv2.rectangle(frame, (int(torso[0]), int(torso[1])),
                       (int(torso[2]), int(torso[3])), (255, 165, 0), 2)
@@ -496,6 +568,8 @@ def main():
       k = cv2.waitKey(1) & 0xFF
       if k in (ord("q"), 27):
         break
+      if k == ord("d"):
+        debug = not debug
       if k == ord("f"):
         fullscreen = not fullscreen
         cv2.setWindowProperty(
