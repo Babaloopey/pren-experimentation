@@ -59,12 +59,13 @@ COS_UP = np.cos(np.radians(60))  # AUF: max. 60° Abweichung von "oben"
 MIN_2D_LEN = 0.35
 
 # PLATZ: Arm-Kontext aus der Pose (hilft, wenn der Finger zur Kamera zeigt)
-ARM_DOWN_COS = np.cos(np.radians(50))  # Schulter->Handgelenk max. 50° von "unten"
+ARM_DOWN_COS = np.cos(np.radians(65))  # Schulter->Handgelenk max. 65° von "unten"
 ARM_MATCH_FRAC = 0.8  # Hand <-> Handgelenk-Keypoint: max. Abstand (x Schulterbreite)
 ARM_WRIST_CONF = 0.3  # min. Konfidenz des Handgelenk-Keypoints
 POINT_INDEX_LOOSE = 0.80  # lockere Streckung des Zeigefingers (Arm-Kontext)
 HAND_DETECTION_CONF = 0.5
 EMA_ALPHA = 0.5
+DOM_MIN = 1.35  # meine erste Version hatte 1.25 -> zu locker
 
 # Klassifikator-Schwellen
 OPEN_PALM_MIN = 0.5
@@ -484,10 +485,15 @@ def main():
           # PLATZ-Kontext: Arm hängt/zeigt nach unten (aus der Pose)
           arm_v = arm_down_value(palm, arms)
           arm_down = arm_v is not None and arm_v > ARM_DOWN_COS
+          w3d = sm_worlds[key]
+          palm_len = max(np.linalg.norm(w3d[9] - w3d[0]), 1e-6)
+          reach_idx = np.linalg.norm(w3d[8] - w3d[0]) / palm_len
+          reach_oth = max(np.linalg.norm(w3d[t] - w3d[0]) / palm_len for t in (12, 16, 20))
+          dominance = reach_idx / max(reach_oth, 1e-6)
+
           pointing_loose = (
-              values["index"] >= POINT_INDEX_LOOSE
-              and n_curled >= POINT_OTHERS_MIN_COUNT
-              and n_ext == 0
+                  values["index"] >= POINT_INDEX_LOOSE
+                  and dominance >= DOM_MIN
           )
           finger_down = pointing and idx_v > COS_DOWN
           arm_pointing_down = pointing_loose and arm_down and idx_v > 0.0
@@ -509,8 +515,8 @@ def main():
           if debug:
             arm_txt = "-" if arm_v is None else f"{arm_v:+.2f}"
             dbg = (
-                f"v={idx_v:+.2f} idx={values['index']:.2f} "
-                f"pt={int(pointing)}/{int(pointing_loose)} arm={arm_txt}"
+              f"v={idx_v:+.2f} idx={values['index']:.2f} dom={dominance:.2f} "
+              f"pt={int(pointing)}/{int(pointing_loose)} arm={arm_txt}"
             )
             cv2.putText(frame, dbg, (int(palm[0]) - 80, int(palm[1]) + 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1,
