@@ -14,7 +14,7 @@ import openwakeword.utils
 F = openwakeword.utils.AudioFeatures()
 
 # 2. Bestehendes Modell laden
-existing_model_path = "Sitz_20261014_145414.onnx"
+existing_model_path = "models/Sitz_20261014_145414.onnx"
 print(f"[*] Analysiere bestehendes Modell: {existing_model_path}")
 
 if not os.path.exists(existing_model_path):

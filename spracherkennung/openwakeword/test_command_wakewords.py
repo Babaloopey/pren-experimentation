@@ -1,3 +1,4 @@
+import argparse
 import os
 import threading
 import time
@@ -5,12 +6,31 @@ import numpy as np
 import pyaudio
 from openwakeword.model import Model
 
+# Mapping of command-line keywords to actual model filenames
+MODEL_FILES = {
+    "Brav": "Brav_20261108_013355.onnx", # funktioniert sehr schlecht
+    "Hier": "Hier_20261108_000920.onnx", # funktioniert sehr schlecht
+    "Sitz": "Sitz_20261014_145414.onnx",
+    "Such": "Such_20261108_012422.onnx",
+}
+
+# Argument parser configuration
+parser = argparse.ArgumentParser(description="Run openWakeWord with a specific command model.")
+parser.add_argument(
+    "model_name",
+    choices=list(MODEL_FILES.keys()),
+    nargs="?",
+    default="Sitz",
+    help="The wake word model to load (default: Sitz)"
+)
+args = parser.parse_args()
+
 # Absoluten Pfad zum Modell ermitteln
 current_dir = os.path.dirname(os.path.abspath(__file__))
-model_filename = "Sitz_20261014_145414.onnx"
-model_path = os.path.join(current_dir, model_filename)
+model_filename = MODEL_FILES[args.model_name]
+model_path = os.path.join(current_dir, "models", model_filename)
 
-print(f"Lade Modell von: {model_path}")
+print(f"Lade Modell '{args.model_name}' von: {model_path}")
 
 # Modell laden mit aktivierter VAD (Voice Activity Detection) gemäss Doku-Empfehlung
 try:
@@ -43,26 +63,23 @@ stream = p.open(
 
 model_key = os.path.splitext(model_filename)[0]
 print(
-    f"[*] Höre zu mit VAD-Filter... Sage: '{model_key}' (STRG+C zum Beenden)"
+    f"[*] Höre zu mit VAD-Filter... Sage: '{args.model_name}' (STRG+C zum Beenden)"
 )
 
 
 # Funktion für Aktionen nach dem Erkennen (läuft im Hintergrund, blockiert Audio nicht)
 def handle_wake_word_action(score):
   print(
-      f"\n[!] AKTION AUSGEFÜHRT! '{model_key}' erkannt! Konfidenz-Score:"
+      f"\n[!] AKTION AUSGEFÜHRT! '{args.model_name}' erkannt! Konfidenz-Score:"
       f" {score:.2f}"
   )
   # Hier kannst du z.B. Lichter schalten, Aufnahmen starten oder Befehle verarbeiten
-  # time.sleep(1) # Simuliere eine kurze Aufgabe
 
 
 try:
   last_trigger_time = 0
   cooldown_seconds = 1.5  # Sperrzeit gegen mehrfaches Auslösen
-  consecutive_hits = (
-      0  # Zählt aufeinanderfolgende Frames über dem Schwellenwert
-  )
+  consecutive_hits = 0  # Zählt aufeinanderfolgende Frames über dem Schwellenwert
   required_consecutive = 2  # Muss in X Frames nacheinander da sein
 
   while True:

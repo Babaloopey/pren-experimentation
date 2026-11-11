@@ -6,7 +6,7 @@ from openwakeword.model import Model
 
 # Absoluten Pfad zum Modell ermitteln
 current_dir = os.path.dirname(os.path.abspath(__file__))
-model_filename = "hey_watson_20261013_031428.onnx"
+model_filename = "models/hey_watson_20261013_031428.onnx"
 model_path = os.path.join(current_dir, model_filename)
 
 print(f"Lade Modell von: {model_path}")
