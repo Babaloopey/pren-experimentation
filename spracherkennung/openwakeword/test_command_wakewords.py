@@ -8,10 +8,10 @@ from openwakeword.model import Model
 
 # Mapping of command-line keywords to actual model filenames
 MODEL_FILES = {
-    "Brav": "Brav_20261108_013355.onnx", # funktioniert sehr schlecht
-    "Hier": "Hier_20261108_000920.onnx", # funktioniert sehr schlecht
-    "Sitz": "Sitz_20261014_145414.onnx",
-    "Such": "Such_20261108_012422.onnx",
+    "Brav": "brav_de.onnx", # mittelmässige Statistik -> 0.5
+    "Hier": "hier_de.onnx", # mittelmässige Statistik -> 0.5
+    "Sitz": "sitz_de.onnx", # gute Statistik -> 0.8
+    "Such": "such_de.onnx", # gute Statistik -> 0.8
 }
 
 # Argument parser configuration
