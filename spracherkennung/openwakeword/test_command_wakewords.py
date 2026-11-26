@@ -92,8 +92,8 @@ try:
 
     current_time = time.time()
 
-    # Schwellenwert-Prüfung (0.1)
-    if score > 0.1:
+    # Schwellenwert-Prüfung (0.5)
+    if score > 0.5:
       consecutive_hits += 1
     else:
       consecutive_hits = 0  # Zurücksetzen, wenn der Pegel abfällt
